@@ -1,11 +1,20 @@
 <template>
-  <section class="page" :data-module="meta.key">
+  <section v-if="meta" class="page" :data-module="meta.key">
     <header class="page-head">
       <div>
         <h2>{{ meta.name }}</h2>
         <p class="page-desc">{{ meta.desc }}</p>
       </div>
       <div class="page-actions">
+        <button
+          v-if="meta.key === 'access_audit'"
+          class="btn"
+          data-testid="session-timeline-entry"
+          type="button"
+          @click="scrollToTimeline"
+        >
+          会话时间线
+        </button>
         <button class="btn primary" data-testid="open-create" type="button" @click="openCreate">
           登记{{ meta.entity }}
         </button>
@@ -14,6 +23,8 @@
         </button>
       </div>
     </header>
+
+    <AnomalyAlertsPanel v-if="meta.key === 'anomaly_detect'" class="embedded-alerts" />
 
     <div class="stat-row">
       <article v-for="item in stats" :key="item.label" class="stat-card">
@@ -70,6 +81,16 @@
       </tbody>
     </table>
 
+    <div
+      v-if="meta.key === 'access_audit'"
+      id="session-timeline-anchor"
+      class="timeline-anchor"
+      :class="{ highlight: timelineHighlight }"
+      data-testid="session-timeline-section"
+    >
+      <SessionTimelinePanel />
+    </div>
+
     <div v-if="showCreate" class="modal-backdrop" data-testid="create-modal">
       <form class="modal" @submit.prevent="submitCreate">
         <h3>登记{{ meta.entity }}</h3>
@@ -91,6 +112,16 @@
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
+
+  <section v-else class="page unknown-module" data-testid="unknown-module">
+    <h2>未登记的业务模块：{{ moduleKey }}</h2>
+    <p class="page-desc">该路径没有对应工作台，可前往新增的会话复核入口：</p>
+    <div class="page-actions">
+      <RouterLink class="btn primary" to="/access_audit/sessions">访问审计 · 会话时间线</RouterLink>
+      <RouterLink class="btn" to="/alerts">告警复核台</RouterLink>
+      <RouterLink class="btn ghost" to="/">返回运营概览</RouterLink>
+    </div>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -100,31 +131,46 @@ import {
   createEntry,
   downloadEntries,
   listEntries,
-  moduleMeta,
   runAction as applyAction,
 } from '@/api/backend-service'
-import type { EntryRow } from '@/data/types'
+import { MODULE_BY_KEY } from '@/data/modules'
+import type { EntryRow, ModuleMeta } from '@/data/types'
+import AnomalyAlertsPanel from '@/features/AnomalyAlertsPanel.vue'
+import SessionTimelinePanel from '@/features/SessionTimelinePanel.vue'
 
 const props = defineProps<{ moduleKey: string }>()
-const meta = moduleMeta(props.moduleKey)
+const meta: ModuleMeta | undefined = MODULE_BY_KEY.get(props.moduleKey)
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = meta.fields.slice(0, 3)
+const filterFields = meta ? meta.fields.slice(0, 3) : []
 const showCreate = ref(false)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
-const stats = computed(() => [
-  { label: meta.metrics[0], value: total.value },
-  { label: meta.metrics[1], value: rows.value.filter((row) => row.status === meta.statuses[1]).length },
-  {
-    label: meta.metrics[2],
-    value: rows.value.filter((row) => row.status === meta.statuses[meta.statuses.length - 1]).length,
-  },
-])
+const timelineHighlight = ref(false)
+
+function scrollToTimeline() {
+  const anchor = document.getElementById('session-timeline-anchor')
+  anchor?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  timelineHighlight.value = true
+  window.setTimeout(() => {
+    timelineHighlight.value = false
+  }, 1600)
+}
+const stats = computed(() => {
+  if (!meta) return []
+  return [
+    { label: meta.metrics[0], value: total.value },
+    { label: meta.metrics[1], value: rows.value.filter((row) => row.status === meta.statuses[1]).length },
+    {
+      label: meta.metrics[2],
+      value: rows.value.filter((row) => row.status === meta.statuses[meta.statuses.length - 1]).length,
+    },
+  ]
+})
 const statusSummary = computed(() =>
-  meta.statuses.map((status) => ({
+  (meta?.statuses ?? []).map((status) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
@@ -136,6 +182,7 @@ function resetFilters() {
 }
 
 async function exportRows() {
+  if (!meta) return
   errorMessage.value = ''
   try {
     await downloadEntries(meta.key, filters.value)
@@ -145,12 +192,14 @@ async function exportRows() {
 }
 
 function openCreate() {
+  if (!meta) return
   createValues.value = Object.fromEntries(meta.fields.map((field) => [field, '']))
   errorMessage.value = ''
   showCreate.value = true
 }
 
 async function submitCreate() {
+  if (!meta) return
   creating.value = true
   errorMessage.value = ''
   try {
@@ -166,6 +215,7 @@ async function submitCreate() {
 }
 
 async function runAction(action: string, row: EntryRow) {
+  if (!meta) return
   errorMessage.value = ''
   try {
     const result = await applyAction(meta.key, Number(row.id), action)
@@ -177,6 +227,7 @@ async function runAction(action: string, row: EntryRow) {
 }
 
 async function reload() {
+  if (!meta) return
   errorMessage.value = ''
   try {
     const payload = await listEntries(meta.key, filters.value)

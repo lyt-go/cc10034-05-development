@@ -77,5 +77,24 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 会话时间线与告警复核（访问审计 × 异常检测）
+
+访问审计页除逐条事件外，新增「会话时间线」入口；异常检测页新增「告警复核台」，
+并有独立的告警详情页（`/alerts/1`、`/access_audit/sessions`）。
+
+- 服务端按 `session_uid` 把同一会话的实际操作排在一起，并按事件时刻（HH:MM）排序。
+- 导出事件可能迟到：`POST /api/access_audit/events`（兼容 `/api/events`、
+  `/api/access_audit` 的 `{values}` 形态等别名）把事件补入原会话，绝不新建会话。
+- 同一事件用 `event_uid`（或 会话+时刻+操作类别+目标 的自然键）幂等去重，重复上报只显示一次。
+- `POST /api/alerts/{id}/confirm`（或通用 `POST /api/anomaly_detect/{id}/actions`
+  `{"action":"确认告警"}`）确认时，把当时的事件快照与复核结论固化进复核记录。
+- 迟到事件落在旧确认快照之外时，告警 `basis_changed=true`、`pending=true`（当前仍待处理），
+  异常检测页与详情页显示「待处理 / 当前仍待处理」，此时只能先「重开复核」
+  （`POST /api/alerts/{id}/reopen`）再确认；历次结论与快照完整保留。
+- 场景数据：会话 `SESS-1001` 初始只有 `10:02` 的查询与待处理告警 `ALERT-1001`；
+  `POST /api/session-review/scenario/deliver-late-export` 可幂等补送 `10:01` 的导出，
+  `POST /api/session-review/reset` 可重置回初始场景。
+
+
 领域：数据工程
 子方向：数据分析与数据应用
